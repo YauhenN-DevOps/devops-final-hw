@@ -17,7 +17,7 @@ psql testdb -h localhost -U admin
  \dt
  
 должен быть такой вывод
--------------------------------
+
        List of relations
  Schema | Name | Type  | Owner
 --------+------+-------+-------
@@ -28,7 +28,7 @@ psql testdb -h localhost -U admin
  select * from test; 
  
  должен быть такой вывод
- ---------------
+ 
      message
 ----------------
  Ansible is fun

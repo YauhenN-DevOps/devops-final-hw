@@ -1,0 +1,138 @@
+---
+- hosts: web_and_db
+  gather_facts: no 
+  become: yes
+
+# "Manage public ports with firewalld ansible module
+  vars:
+    port_list:
+     - { port: 80/tcp, state: enabled }
+     - { port: 443/tcp, state: enabled }
+
+# VARS FOR DB 
+  vars_files:
+    - vars.yml
+
+  tasks:
+    - name: "install epel-release"
+      yum:
+        name: epel-release
+
+    - name: "update and insatll nginx"
+      yum:
+        name: nginx
+        state: latest
+        update_cache: yes
+
+    - name: "start nginx"
+      service:
+          name: nginx
+          state: started
+    
+    - name: "restart nginx"
+      service:
+          name: nginx
+          state: restarted
+
+    - name: "Enable ports on the list"
+      firewalld:
+        zone: public
+        port: "{{ item.port }}"
+        permanent: true
+        state: "{{ item.state }}"
+      loop:
+        "{{ port_list }}"
+      notify:
+        - Restart firewalld
+
+    - name: "Install packages PostgreSQL"
+      yum: "name={{ item }} state=present"
+      with_items:
+        - postgresql
+        - postgresql-server
+        - postgresql-libs
+        - postgresql-devel
+
+    - name: "Install packages Python"
+      yum: "name={{ item }} state=present"
+      with_items:
+         - python-pip
+         - python-psycopg2
+
+    - name: "Find out if PostgreSQL is initialized"
+      ansible.builtin.stat:
+        path: "/var/lib/pgsql/data/pg_hba.conf"
+      register: postgres_data
+
+    - name: "Initialize PostgreSQL"
+      shell: "postgresql-setup initdb"
+      when: not postgres_data.stat.exists
+
+    - name: "Start and enable services"
+      service: "name={{ item }} state=started enabled=yes"
+      with_items:
+        - postgresql
+
+    - name: "Create app database"
+      postgresql_db:
+        state: present
+        name: "{{ db_name }}"
+      become: yes
+      become_user: postgres
+
+    - name: "Create db user"
+      postgresql_user:
+        state: present
+        name: "{{ db_user }}"
+        password: "{{ db_password }}"
+      become: yes
+      become_user: postgres
+
+    - name: "Grant db user access to app db"
+      postgresql_privs:
+        type: database
+        database: "{{ db_name }}"
+        roles: "{{ db_user }}"
+        grant_option: no
+        privs: all
+      become: yes
+      become_user: postgres
+
+    - name: "Allow md5 connection for the db user"
+      postgresql_pg_hba:
+        dest: "~/data/pg_hba.conf"
+        contype: host
+        databases: all
+        method: md5
+        users: "{{ db_user }}"
+        create: true
+      become: yes
+      become_user: postgres
+      notify: 
+        - restart postgres
+
+    - name: "Copy file with owner and permissions"
+      copy:
+        src: /etc/ansible/dump.sql
+        dest: /tmp/dump.sql
+        owner: root
+        group: root
+        mode: '0777'
+
+    - name: "Add some dummy data to our database"
+      become: true
+      become_user: postgres
+      shell: psql {{ db_name }} < /tmp/dump.sql
+
+  handlers:
+    - name: "Restart postgresql"
+      service: 
+        name: postgresql 
+        state: restarted
+      listen: "restart postgres"
+
+    - name: "Restart firewalld"
+      service:
+        name: firewalld
+        state: restarted
+      listen: "Restart firewalld "
